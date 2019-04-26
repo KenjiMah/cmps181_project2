@@ -23,6 +23,17 @@ RecordBasedFileManager::RecordBasedFileManager()
 RecordBasedFileManager::~RecordBasedFileManager()
 {
 }
+RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid) {
+    return -1;
+}
+RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const void *data, const RID &rid) {
+    return -1;
+}
+
+RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid, const string &attributeName, void *data){
+    return -1;
+}
+
 
 RC RecordBasedFileManager::createFile(const string &fileName) {
     // Creating a new paged file.
