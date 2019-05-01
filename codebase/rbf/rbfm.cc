@@ -16,6 +16,7 @@ RecordBasedFileManager* RecordBasedFileManager::instance()
     return _rbf_manager;
 }
 
+RecordBasedFileManager::RecordBasedFileManager()
 {
 }
 
@@ -44,7 +45,7 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const vector<Att
     memcpy((char*)pageData + slotHeader.freeSpaceOffset + recordEntry.length, (char*)pageData + slotHeader.freeSpaceOffset, recordEntry.offset - slotHeader.freeSpaceOffset);
 
     SlotDirectoryRecordEntry newRecordSlot;
-    for(i = 0; i < slotHeader.recordEntriesNumber; i++){
+    for(int i = 0; i < slotHeader.recordEntriesNumber; i++){
         newRecordSlot = getSlotDirectoryRecordEntry(pageData, i);
         if(newRecordSlot.offset <= recordEntry.offset){
             newRecordSlot.offset += recordEntry.length;
@@ -53,7 +54,6 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const vector<Att
     }
     //update slot header
     slotHeader.freeSpaceOffset += recordEntry.length;
-    slotHeader.length = 0;
     setSlotDirectoryHeader(pageData, slotHeader);
     
     //rewrite the entire page
@@ -112,8 +112,50 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const vector<Att
     }
     //if new record will not fit back int othe page then create a tombstone
     else{
-        //do tombstone stuff
-        
+//        //do tombstone stuff
+//        RID newrid;
+//        // Cycles through pages looking for enough free space for the new entry.
+//        void *pageData2 = malloc(PAGE_SIZE);
+//        if (pageData2 == NULL)
+//            return RBFM_MALLOC_FAILED;
+//        bool pageFound = false;
+//        unsigned i;
+//        unsigned numPages = fileHandle.getNumberOfPages();
+//        for (i = 0; i < numPages; i++)
+//        {
+//            if (fileHandle.readPage(i, pageData2))
+//                return RBFM_READ_FAILED;
+//
+//            // When we find a page with enough space (accounting also for the size that will be added to the slot directory), we stop the loop.
+//            if (getPageFreeSpaceSize(pageData2) >= sizeof(SlotDirectoryRecordEntry) + newRecordSize)
+//            {
+//                pageFound = true;
+//                break;
+//            }
+//        }
+//
+//        // If we can't find a page with enough space, we create a new one
+//        if(!pageFound)
+//        {
+//            newRecordBasedPage(pageData);
+//        }
+//        // Setting up the return RID.
+//        newrid.pageNum = i;
+//        newrid.slotNum = slotHeader.recordEntriesNumber;
+//        /////////////////////////////////////////////
+//        // Adding the new record reference in the slot directory.
+//        SlotDirectoryRecordEntry newRecordEntry;
+//        newRecordEntry.length = newRecordSize;
+//        newRecordEntry.offset = slotHeader.freeSpaceOffset - newRecordSize;
+//        setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
+//
+//        //set the record at the offset
+//        setRecordAtOffset (pageData, slotHeader.freeSpaceOffset - newRecordSize, recordDescriptor, data);
+//        if (fileHandle.writePage(rid.pageNum, pageData)){
+//            return RBFM_WRITE_FAILED;
+//        }
+//        ////////////////////////////////////////////
+//        free(pageData2);
     }
         
     free(pageData);
@@ -138,13 +180,14 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
     
     // Gets the slot directory record entry data
     SlotDirectoryRecordEntry recordEntry = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
+    
     // Get number of columns and size of the null indicator for this record
     RecordLength len = 0;
     memcpy (&len, pageData + recordEntry.offset, sizeof(RecordLength));
     int recordNullIndicatorSize = getNullIndicatorSize(len);
-    char nullIndicator[nullIndicatorSize];
-    memset(nullIndicator, 0, nullIndicatorSize);
-    memcpy(nullIndicator, pageData + recordEntry.offset + sizeof(RecordLength), nullIndicatorSize);
+    char nullIndicator[recordNullIndicatorSize];
+    memset(nullIndicator, 0, recordNullIndicatorSize);
+    memcpy(nullIndicator, pageData + recordEntry.offset + sizeof(RecordLength), recordNullIndicatorSize);
     
     // We've read in the null indicator, so we can skip past it now
     ColumnOffset startPointer;
@@ -169,7 +212,6 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
         }
     }
     free(pageData);
-    free(record);
     return SUCCESS;
 }
 
