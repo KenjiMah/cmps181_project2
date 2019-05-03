@@ -1,0 +1,47 @@
+RC RelationManager::deleteTable(const string &tableName)
+{
+    if(tableName == "Table" || tableName == "Column"){
+        fprintf(stderr, "You cannot delete from the catalog tables\n");
+        return -1;
+    }
+    if(_rbf_manager->destroyFile(tableName + ".tbl")){
+        fprintf(stderr, "Failure destroying table\n");
+        return -1;
+    }
+    RM_ScanIterator scanner;
+    vector<string> getAttrs;
+    getAttrs.push_back("table-id");
+    scan("Tables", "table-name", EQ_OP, tableName.c_str(), getAttrs, scanner);
+    vector<RID> rids;
+    RID rid;
+    void * data = calloc(1, 4096);
+    if(scanner.getNextTuple(rid, data) == RM_EOF){
+        fprintf(stderr, "Table doesn't exist\n");
+        return -1;
+    }  
+    FileHandle newt;
+    _rbf_manager->openFile("Tables.tbl", newt);
+    if(_rbf_manager->deleteRecord(newt, tableAttrs, rid)){
+        fprintf(stderr, "Error deleting record in table catalog\n");
+        return -1;
+    }
+    getAttrs.clear();
+    RM_ScanIterator scanner2;
+    int * hold = (int *)calloc(1, sizeof(int));
+    memcpy(hold, (char*)data+1, sizeof(int));
+    scan("Columns", "table-id", EQ_OP, hold, getAttrs, scanner2);
+    memset(data, 0, 4096);  
+    while(scanner2.getNextTuple(rid, data) != RM_EOF){
+        rids.push_back(rid);
+    }
+    FileHandle newts;
+    _rbf_manager->openFile("Columns.tbl", newts);
+    for(int i = 0; i < (int)rids.size(); i++){
+        if(_rbf_manager->deleteRecord(newts, columnAttrs, rids[i])){
+            fprintf(stderr, "Error deleting record in column catalog\n");
+            return -1;
+        }
+    }
+    free(data);
+    return 0;
+}
