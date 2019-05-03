@@ -30,7 +30,8 @@ ID#s and Names for others on the Team
 - Describe your use of Forwarding Addresses, including what happens when a Forwarding Address needs to be forwarded to yet another page.
 - Describe how a scan is done, touching each record once even when there are Forwarding Addresses.
 - Describe how you determine that a previously slot on a page is empty (after record is deleted), so that the slot can be re-used for another record.  (Yes, a record's rid is supposed to be permanent, but only while the record exists.)
-
+/////////////////////////////////
+For determining if a slot is free the length will be 0. When inserting we will go through the slots to see if there are and free slots.
 
 7. Other (optional)
 - Freely use this section to tell us about things that are related to the project 2, but not related to the other sections, such as design and implementation information for Advanced Features, if you've implemented them (optional).

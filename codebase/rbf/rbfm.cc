@@ -4,7 +4,6 @@
 #include <iostream>
 #include <string.h>
 #include <iomanip>
-
 RecordBasedFileManager* RecordBasedFileManager::_rbf_manager = NULL;
 PagedFileManager *RecordBasedFileManager::_pf_manager = NULL;
 
@@ -53,6 +52,20 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const vector<Att
         }
     }
     //update slot header
+    newRecordSlot = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
+    newRecordSlot.length = 0;
+    newRecordSlot.offset = 1; // i just set it to one cause we might need to to be 0
+    setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordSlot);
+    //delete the last slots that are not used anymore (clean-up)
+    if(rid.slotNum == slotHeader.recordEntriesNumber - 1){ //aka if its the last slot clear up and previous slots
+        for(int i = slotHeader.recordEntriesNumber - 1; i >= 0; i --){
+            newRecordSlot = getSlotDirectoryRecordEntry(pageData, i);
+            if(newRecordSlot.length == 0){
+                break;
+            }
+            slotHeader.recordEntriesNumber -= 1;
+        }
+    }
     slotHeader.freeSpaceOffset += recordEntry.length;
     setSlotDirectoryHeader(pageData, slotHeader);
     
@@ -64,11 +77,8 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const vector<Att
     return SUCCESS;
 }
 
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const void *data, const RID &rid) {
+RC RecordBasedFileManager::deleteRecordUnclean(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid) {
+    // Retrieve the specified page
     void * pageData = malloc(PAGE_SIZE);
     if (fileHandle.readPage(rid.pageNum, pageData)){
         return RBFM_READ_FAILED;
@@ -84,81 +94,176 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const vector<Att
     // Gets the slot directory record entry data
     SlotDirectoryRecordEntry recordEntry = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
     
-    int newRecordSize = getRecordSize(recordDescriptor, data);
-    int oldRecordSize = recordEntry.length;
+    //copy the records before the record we are about to delete
+    memcpy((char*)pageData + slotHeader.freeSpaceOffset + recordEntry.length, (char*)pageData + slotHeader.freeSpaceOffset, recordEntry.offset - slotHeader.freeSpaceOffset);
+    
+    SlotDirectoryRecordEntry newRecordSlot;
+    for(int i = 0; i < slotHeader.recordEntriesNumber; i++){
+        newRecordSlot = getSlotDirectoryRecordEntry(pageData, i);
+        if(newRecordSlot.offset <= recordEntry.offset){
+            newRecordSlot.offset += recordEntry.length;
+            setSlotDirectoryRecordEntry(pageData, i, newRecordSlot);
+        }
+    }
+    //update slot header
+    newRecordSlot = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
+    newRecordSlot.length = 0;
+    newRecordSlot.offset = 1; // i just set it to one cause we might need to to be 0
+    setSlotDirectoryHeader(pageData, slotHeader);
+    
+    //rewrite the entire page
+    if (fileHandle.writePage(rid.pageNum, pageData)){
+        return RBFM_WRITE_FAILED;
+    }
+    free(pageData);
+    return SUCCESS;
+}
+//negative offset represents page number(tombsone only)
+//length turns into the slotnumber (tombsone only) + 1 becuase 0 denotes an empty slot
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const void *data, const RID &rid) {
+    void * pageData = malloc(PAGE_SIZE);
+    void * pageDataExtra = malloc(PAGE_SIZE);//page data extra represnets the page where the tombstone points to
+    if (fileHandle.readPage(rid.pageNum, pageData)){
+        return RBFM_READ_FAILED;
+    }
+    
+    // Checks if the specific slot id exists in the page
+    SlotDirectoryHeader slotHeader = getSlotDirectoryHeader(pageData);
+    SlotDirectoryHeader slotHeaderExtra;//slot header extra represents where the tombstone points to
+    SlotDirectoryRecordEntry newRecordEntry;
+    if(slotHeader.recordEntriesNumber < rid.slotNum){
+        return RBFM_SLOT_DN_EXIST;
+    }
+    
+    // Gets the slot directory record entry data
+    SlotDirectoryRecordEntry recordEntry = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
+    RID tempRID;
+    bool isTombstone = false;
+    
+    // check if its a tombstone
+    if(recordEntry.offset < 0){
+        isTombstone = true;
+        //tempRID points to where the actual data is stored
+        tempRID.pageNum = abs(recordEntry.offset);
+        tempRID.slotNum = recordEntry.length - 1;
+        if (fileHandle.readPage(tempRID.pageNum, pageDataExtra)){
+            return RBFM_READ_FAILED;
+        }
+        
+        // Checks if the specific slot id exists in the page
+        slotHeaderExtra = getSlotDirectoryHeader(pageData);
+        
+        if(slotHeaderExtra.recordEntriesNumber < tempRID.slotNum){
+            return RBFM_SLOT_DN_EXIST;
+        }
+        recordEntry = getSlotDirectoryRecordEntry(pageDataExtra, tempRID.slotNum); // now record entry points to the slot that the tombstone points to
+    }
+    
+    unsigned int newRecordSize = getRecordSize(recordDescriptor, data);
+    unsigned int oldRecordSize = recordEntry.length;
+    int freespace;
+    if(isTombstone){
+        freespace = getPageFreeSpaceSize(pageDataExtra);
+    }
+    else{
+        freespace = getPageFreeSpaceSize(pageData);
+    }
     //if new record is the same size then just replace the old one
     if(newRecordSize == oldRecordSize){
-        setRecordAtOffset (pageData, recordEntry.offset, recordDescriptor, data);
-        if (fileHandle.writePage(rid.pageNum, pageData)){
-            return RBFM_WRITE_FAILED;
+        if(!isTombstone){
+            setRecordAtOffset (pageData, recordEntry.offset, recordDescriptor, data);
+            if (fileHandle.writePage(rid.pageNum, pageData)){
+                return RBFM_WRITE_FAILED;
+            }
+        }
+        else{
+            //record entry changed automatically if its a tombstone
+            setRecordAtOffset (pageDataExtra, recordEntry.offset, recordDescriptor, data);
+            if (fileHandle.writePage(tempRID.pageNum, pageDataExtra)){
+                return RBFM_WRITE_FAILED;
+            }
         }
     }
     //if new record is a different size but there is still freespace within that page to fit the new record then delete record and put the new record in the same page
-    else if(getPageFreeSpaceSize(pageData) >= newRecordSize - oldRecordSize){
-        deleteRecord(fileHandle, recordDescriptor, rid);
-        slotHeader = getSlotDirectoryHeader(pageData);
-        
-        // Adding the new record reference in the slot directory.
-        SlotDirectoryRecordEntry newRecordEntry;
-        newRecordEntry.length = newRecordSize;
-        newRecordEntry.offset = slotHeader.freeSpaceOffset - newRecordSize;
-        setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
-        
-        //set the record at the offset
-        setRecordAtOffset (pageData, slotHeader.freeSpaceOffset - newRecordSize, recordDescriptor, data);
-        if (fileHandle.writePage(rid.pageNum, pageData)){
-            return RBFM_WRITE_FAILED;
+    else if(freespace >= newRecordSize - oldRecordSize){
+        if(!isTombstone){
+            deleteRecordUnclean(fileHandle, recordDescriptor, rid);
+            //remember to update slot header after delete
+            if (fileHandle.readPage(rid.pageNum, pageData)){
+                return RBFM_READ_FAILED;
+            }
+            slotHeader = getSlotDirectoryHeader(pageData);
+            
+            // Adding the new record reference in the slot directory.
+            
+            newRecordEntry.length = newRecordSize;
+            newRecordEntry.offset = slotHeader.freeSpaceOffset - newRecordSize;
+            setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
+            
+            //set the record at the offset
+            setRecordAtOffset (pageData, slotHeader.freeSpaceOffset - newRecordSize, recordDescriptor, data);
+            if (fileHandle.writePage(rid.pageNum, pageData)){
+                return RBFM_WRITE_FAILED;
+            }
+        }
+        else{
+            deleteRecordUnclean(fileHandle, recordDescriptor, tempRID);
+            //remember to update slot header after delete
+            if (fileHandle.readPage(tempRID.pageNum, pageDataExtra)){
+                return RBFM_READ_FAILED;
+            }
+            slotHeader = getSlotDirectoryHeader(pageDataExtra);
+            
+            // Adding the new record reference in the slot directory.
+            newRecordEntry.length = newRecordSize;
+            newRecordEntry.offset = slotHeader.freeSpaceOffset - newRecordSize;
+            setSlotDirectoryRecordEntry(pageDataExtra, tempRID.slotNum, newRecordEntry);
+            
+            //set the record at the offset
+            setRecordAtOffset (pageDataExtra, slotHeader.freeSpaceOffset - newRecordSize, recordDescriptor, data);
+            if (fileHandle.writePage(tempRID.pageNum, pageDataExtra)){
+                return RBFM_WRITE_FAILED;
+            }
         }
     }
-    //if new record will not fit back int othe page then create a tombstone
+    //if new record will not fit back into the page then create a tombstone
     else{
-//        //do tombstone stuff
-//        RID newrid;
-//        // Cycles through pages looking for enough free space for the new entry.
-//        void *pageData2 = malloc(PAGE_SIZE);
-//        if (pageData2 == NULL)
-//            return RBFM_MALLOC_FAILED;
-//        bool pageFound = false;
-//        unsigned i;
-//        unsigned numPages = fileHandle.getNumberOfPages();
-//        for (i = 0; i < numPages; i++)
-//        {
-//            if (fileHandle.readPage(i, pageData2))
-//                return RBFM_READ_FAILED;
-//
-//            // When we find a page with enough space (accounting also for the size that will be added to the slot directory), we stop the loop.
-//            if (getPageFreeSpaceSize(pageData2) >= sizeof(SlotDirectoryRecordEntry) + newRecordSize)
-//            {
-//                pageFound = true;
-//                break;
-//            }
-//        }
-//
-//        // If we can't find a page with enough space, we create a new one
-//        if(!pageFound)
-//        {
-//            newRecordBasedPage(pageData);
-//        }
-//        // Setting up the return RID.
-//        newrid.pageNum = i;
-//        newrid.slotNum = slotHeader.recordEntriesNumber;
-//        /////////////////////////////////////////////
-//        // Adding the new record reference in the slot directory.
-//        SlotDirectoryRecordEntry newRecordEntry;
-//        newRecordEntry.length = newRecordSize;
-//        newRecordEntry.offset = slotHeader.freeSpaceOffset - newRecordSize;
-//        setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
-//
-//        //set the record at the offset
-//        setRecordAtOffset (pageData, slotHeader.freeSpaceOffset - newRecordSize, recordDescriptor, data);
-//        if (fileHandle.writePage(rid.pageNum, pageData)){
-//            return RBFM_WRITE_FAILED;
-//        }
-//        ////////////////////////////////////////////
-//        free(pageData2);
+        //do tombstone stuff
+        RID newRID;
+        if(!isTombstone){
+            deleteRecordUnclean(fileHandle, recordDescriptor, rid);
+            insertRecord(fileHandle, recordDescriptor, data, newRID);
+            //remember to update slot header after delete
+            if (fileHandle.readPage(rid.pageNum, pageData)){
+                return RBFM_READ_FAILED;
+            }
+            slotHeader = getSlotDirectoryHeader(pageData);
+            
+            // Adding the new record reference in the slot directory.
+            newRecordEntry.length = newRID.slotNum + 1;
+            newRecordEntry.offset = (-1) * newRID.pageNum;
+            setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
+        }
+        else{
+            deleteRecordUnclean(fileHandle, recordDescriptor, tempRID);
+            insertRecord(fileHandle, recordDescriptor, data, newRID);
+            //remember to update slot header after delete
+            if (fileHandle.readPage(tempRID.pageNum, pageDataExtra)){
+                return RBFM_READ_FAILED;
+            }
+            slotHeader = getSlotDirectoryHeader(pageDataExtra);
+            
+            // Adding the new record reference in the slot directory.
+            newRecordEntry.length = newRID.slotNum + 1;
+            newRecordEntry.offset = (-1) * newRID.pageNum;
+            setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
+        }
     }
         
     free(pageData);
+    free(pageDataExtra);
     return SUCCESS;
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -183,11 +288,11 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
     
     // Get number of columns and size of the null indicator for this record
     RecordLength len = 0;
-    memcpy (&len, pageData + recordEntry.offset, sizeof(RecordLength));
+    memcpy (&len, (char *)pageData + recordEntry.offset, sizeof(RecordLength));
     int recordNullIndicatorSize = getNullIndicatorSize(len);
     char nullIndicator[recordNullIndicatorSize];
     memset(nullIndicator, 0, recordNullIndicatorSize);
-    memcpy(nullIndicator, pageData + recordEntry.offset + sizeof(RecordLength), recordNullIndicatorSize);
+    memcpy(nullIndicator, (char *)pageData + recordEntry.offset + sizeof(RecordLength), recordNullIndicatorSize);
     
     // We've read in the null indicator, so we can skip past it now
     ColumnOffset startPointer;
@@ -196,18 +301,20 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
         if(recordDescriptor[i].name == attributeName){
             // Skip null fields
             if (fieldIsNull(nullIndicator, i)){
-                memcpy(data, 0, sizeof(char));
+                memset(data, 1, 1);
                 return SUCCESS;
             }
             else if(i == 0){
-                memcpy(&endPointer, pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
-                memcpy((char *)data + sizeof(char), pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, endPointer - sizeof(RecordLength) + recordNullIndicatorSize);
+                memcpy(data, 0, 1);
+                memcpy(&endPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
+                memcpy((char *)data + sizeof(char), (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, endPointer - sizeof(RecordLength) + recordNullIndicatorSize);
             }
             else{
+                memset(data, 0, 1);
                 // Grab pointer to end of this column
-                memcpy(&startPointer, pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
-                memcpy(&endPointer, pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
-                memcpy((char *)data + sizeof(char), pageData + recordEntry.offset + startPointer, endPointer - startPointer);
+                memcpy(&startPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
+                memcpy(&endPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
+                memcpy((char *)data + sizeof(char), (char *)pageData + recordEntry.offset + startPointer, endPointer - startPointer);
             }
         }
     }
@@ -282,20 +389,31 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const vector<Att
     }
 
     SlotDirectoryHeader slotHeader = getSlotDirectoryHeader(pageData);
-
+    SlotDirectoryRecordEntry newRecordEntry;
     // Setting up the return RID.
     rid.pageNum = i;
-    rid.slotNum = slotHeader.recordEntriesNumber;
-
+    bool freeSlot = false;
+    for(int j = 0; j < slotHeader.recordEntriesNumber; j++){
+        newRecordEntry = getSlotDirectoryRecordEntry(pageData, j);
+        if(newRecordEntry.length == 0){
+            rid.slotNum = j;
+            freeSlot = true;
+            break;
+        }
+    }
+    if(!freeSlot){
+        rid.slotNum = slotHeader.recordEntriesNumber;
+    }
     // Adding the new record reference in the slot directory.
-    SlotDirectoryRecordEntry newRecordEntry;
     newRecordEntry.length = recordSize;
     newRecordEntry.offset = slotHeader.freeSpaceOffset - recordSize;
     setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
 
     // Updating the slot directory header.
     slotHeader.freeSpaceOffset = newRecordEntry.offset;
-    slotHeader.recordEntriesNumber += 1;
+    if(!freeSlot){
+        slotHeader.recordEntriesNumber += 1;
+    }
     setSlotDirectoryHeader(pageData, slotHeader);
 
     // Adding the record data.
@@ -331,7 +449,17 @@ RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const vector<Attri
 
     // Gets the slot directory record entry data
     SlotDirectoryRecordEntry recordEntry = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
-
+    /////////////////////////////////////
+    //check for tombstones
+    if(recordEntry.offset < 0){// if the record offset is less than 0 then its a tombstone
+        if (fileHandle.readPage(abs(recordEntry.offset), pageData))
+            return RBFM_READ_FAILED;
+        slotHeader = getSlotDirectoryHeader(pageData);
+        
+        if(slotHeader.recordEntriesNumber < recordEntry.length)
+            return RBFM_SLOT_DN_EXIST;
+    }
+    ////////////////////////////////////
     // Retrieve the actual entry data
     getRecordAtOffset(pageData, recordEntry.offset, recordDescriptor, data);
 

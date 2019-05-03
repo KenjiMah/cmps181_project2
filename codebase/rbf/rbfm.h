@@ -139,7 +139,7 @@ public:
 IMPORTANT, PLEASE READ: All methods below this comment (other than the constructor and destructor) are NOT required to be implemented for the part 1 of the project
 ******************************************************************************************************************************************************************/
   RC deleteRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid);
-
+  RC deleteRecordUnclean(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid);
   // Assume the RID does not change after an update
   RC updateRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const void *data, const RID &rid);
 
