@@ -39,10 +39,11 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const vector<Att
     
     // Gets the slot directory record entry data
     SlotDirectoryRecordEntry recordEntry = getSlotDirectoryRecordEntry(pageData, rid.slotNum);
-    
+    void * recordsBefore = (char *)calloc(1 ,recordEntry.offset - slotHeader.freeSpaceOffset);
     //copy the records before the record we are about to delete
-    memcpy((char*)pageData + slotHeader.freeSpaceOffset + recordEntry.length, (char*)pageData + slotHeader.freeSpaceOffset, recordEntry.offset - slotHeader.freeSpaceOffset);
-
+    memcpy((char *)recordsBefore, (char *)pageData + slotHeader.freeSpaceOffset, recordEntry.offset - slotHeader.freeSpaceOffset);
+    memcpy((char *)pageData + slotHeader.freeSpaceOffset + recordEntry.length, (char*)recordsBefore, recordEntry.offset - slotHeader.freeSpaceOffset);
+    free(recordsBefore);
     SlotDirectoryRecordEntry newRecordSlot;
     for(int i = 0; i < slotHeader.recordEntriesNumber; i++){
         newRecordSlot = getSlotDirectoryRecordEntry(pageData, i);
@@ -313,13 +314,14 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
             }
             else if(i == 0){
                 memset(data, 0, 1);
-                memcpy(&endPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
+                memcpy(&endPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, sizeof(ColumnOffset));
                 if(recordDescriptor[i].type == TypeVarChar){
-                    int hold = endPointer - sizeof(RecordLength) + recordNullIndicatorSize;
+                    int hold = endPointer - sizeof(RecordLength) + recordNullIndicatorSize - (len*sizeof(ColumnOffset));
                     memcpy((char *)data + dataOffset, &hold, sizeof(int));
                     dataOffset += sizeof(int);
                 }
-                memcpy((char *)data + dataOffset, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, endPointer - sizeof(RecordLength) + recordNullIndicatorSize);
+                memcpy((char *)data + dataOffset, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + len*sizeof(ColumnOffset), endPointer - sizeof(RecordLength) - recordNullIndicatorSize - (len*sizeof(ColumnOffset)));
+                // cout << endPointer << endl;
             }
             else{
                 memset(data, 0, 1);
@@ -475,6 +477,9 @@ RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const vector<Attri
         
         if(slotHeader.recordEntriesNumber < recordEntry.length)
             return RBFM_SLOT_DN_EXIST;
+    }
+    if(recordEntry.length == 0){
+        return -1;
     }
     ////////////////////////////////////
     // Retrieve the actual entry data
