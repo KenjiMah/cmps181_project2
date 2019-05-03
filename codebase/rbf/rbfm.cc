@@ -245,20 +245,26 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const vector<Att
             newRecordEntry.length = newRID.slotNum + 1;
             newRecordEntry.offset = (-1) * newRID.pageNum;
             setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
+            if (fileHandle.writePage(rid.pageNum, pageData)){
+                return RBFM_WRITE_FAILED;
+            }
         }
         else{
             deleteRecordUnclean(fileHandle, recordDescriptor, tempRID);
             insertRecord(fileHandle, recordDescriptor, data, newRID);
             //remember to update slot header after delete
-            if (fileHandle.readPage(tempRID.pageNum, pageDataExtra)){
+            if (fileHandle.readPage(tempRID.pageNum, pageData)){
                 return RBFM_READ_FAILED;
             }
-            slotHeader = getSlotDirectoryHeader(pageDataExtra);
+            slotHeader = getSlotDirectoryHeader(pageData);
             
             // Adding the new record reference in the slot directory.
             newRecordEntry.length = newRID.slotNum + 1;
             newRecordEntry.offset = (-1) * newRID.pageNum;
             setSlotDirectoryRecordEntry(pageData, rid.slotNum, newRecordEntry);
+            if (fileHandle.writePage(rid.pageNum, pageData)){
+                return RBFM_WRITE_FAILED;
+            }
         }
     }
         
