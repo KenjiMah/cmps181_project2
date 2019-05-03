@@ -317,6 +317,9 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
                 if(recordDescriptor[i].type == TypeVarChar){
                     dataOffset += sizeof(int);
                     memcpy((char *)data + dataOffset, endPointer - sizeof(RecordLength) + recordNullIndicatorSize, sizeof(int));
+                    int hold = endPointer - sizeof(RecordLength) + recordNullIndicatorSize;
+                    memcpy((char *)data + dataOffset, &hold, sizeof(int));
+                    dataOffset += sizeof(int);
                 }
                 memcpy((char *)data + dataOffset, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, endPointer - sizeof(RecordLength) + recordNullIndicatorSize);
             }
@@ -328,6 +331,9 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
                 if(recordDescriptor[i].type == TypeVarChar){
                     dataOffset += sizeof(int);
                     memcpy((char *)data + dataOffset, endPointer - startPointer, sizeof(int));
+                    int hold = endPointer - startPointer;
+                    memcpy((char *)data + dataOffset, &hold, sizeof(int));
+                    dataOffset += sizeof(int);
                 }
                 memcpy((char *)data + dataOffset, (char *)pageData + recordEntry.offset + startPointer, endPointer - startPointer);
             }
