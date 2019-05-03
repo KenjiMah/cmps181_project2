@@ -303,6 +303,7 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
     // We've read in the null indicator, so we can skip past it now
     ColumnOffset startPointer;
     ColumnOffset endPointer;
+    int dataOffset = sizeof(char);
     for (unsigned i = 0; i < (unsigned) recordDescriptor.size(); i++){
         if(recordDescriptor[i].name == attributeName){
             // Skip null fields
@@ -311,16 +312,24 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const vector<At
                 return SUCCESS;
             }
             else if(i == 0){
-                memcpy(data, 0, 1);
+                memset(data, 0, 1);
                 memcpy(&endPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
-                memcpy((char *)data + sizeof(char), (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, endPointer - sizeof(RecordLength) + recordNullIndicatorSize);
+                if(recordDescriptor[i].type == TypeVarChar){
+                    dataOffset += sizeof(int);
+                    memcpy((char *)data + dataOffset, endPointer - sizeof(RecordLength) + recordNullIndicatorSize, sizeof(int));
+                }
+                memcpy((char *)data + dataOffset, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize, endPointer - sizeof(RecordLength) + recordNullIndicatorSize);
             }
             else{
                 memset(data, 0, 1);
                 // Grab pointer to end of this column
-                memcpy(&startPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
+                memcpy(&startPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + (i-1) * sizeof(ColumnOffset), sizeof(ColumnOffset));
                 memcpy(&endPointer, (char *)pageData + recordEntry.offset + sizeof(RecordLength) + recordNullIndicatorSize + i * sizeof(ColumnOffset), sizeof(ColumnOffset));
-                memcpy((char *)data + sizeof(char), (char *)pageData + recordEntry.offset + startPointer, endPointer - startPointer);
+                if(recordDescriptor[i].type == TypeVarChar){
+                    dataOffset += sizeof(int);
+                    memcpy((char *)data + dataOffset, endPointer - startPointer, sizeof(int));
+                }
+                memcpy((char *)data + dataOffset, (char *)pageData + recordEntry.offset + startPointer, endPointer - startPointer);
             }
         }
     }
