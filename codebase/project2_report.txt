@@ -1,8 +1,8 @@
 1. Basic information
-Team Number : 
-Student ID# of Submitter:
-Name of Submitter: 
-ID#s and Names for others on the Team
+Team number: 10
+Student ID of submitter: 1593676
+Student Name of submitter: Kenji Mah
+Other Team Members: Kiran Gurung 
 
 
 2. Metadata
@@ -13,12 +13,17 @@ ID#s and Names for others on the Team
 - Show your record format design and describe how your design satisfies O(1) field access. If not, just mention that your team hasn't implemented this feature.
 - Describe how you store a VarChar field.
 - Describe how you deal with an update and delete.
-
+For our records we stored it the same way shown in lecture 3 slide 12:
+(number of fields) (null bytes) ([end of field 1] [end of field 2] --- [end of field n]) (fields);
+-For a VarChar field we only inputed the actual characters of the VarChar in a field. to calculate the number of characters of the var char you just take the end of that field and minus it from the revise field.
 
 4. Page Format
 - Show your page format design.
 - Describe how you deal with an update and delete.
-
+the page format would look like the following:
+(offset to start of free space)(number of slots) (slot directory) (free space) ([record 1] --- [record n]) 
+-for updates we checked if it was a the slot was a forwarding address, then if the new data was the same length as the old data we would keep it forwarded and just replace the data in the same offset. If the new data was less than the old, we would delete the old record and insert the record on the same page again and still kept it forwarded if that was the case. If the record was too big to fit on the same page, we deleted the record and called insert record to look for a new place for it. if it was forwarded we would just update the forwarding address and if it wasn't we would make a forwarding address for it.
+-delete moves removes the record and takes the records that come before it and move it in its place eliminating and wasted space the slot directory would then be updated and clean it up be checking, from the last slot , consecutive empty slots and update the number of slots accordingly.
 
 5. File Format
 - Show your file format design.
@@ -30,7 +35,10 @@ ID#s and Names for others on the Team
 - Describe your use of Forwarding Addresses, including what happens when a Forwarding Address needs to be forwarded to yet another page.
 - Describe how a scan is done, touching each record once even when there are Forwarding Addresses.
 - Describe how you determine that a previously slot on a page is empty (after record is deleted), so that the slot can be re-used for another record.  (Yes, a record's rid is supposed to be permanent, but only while the record exists.)
-
+/////////////////////////////////
+-For forwarding addresses we used the slot and page of the unchanged rid to point to the page and slot where the record actually resides. The information of the slot is altered so that the offset is negative but taking the absolute value of it will result in the page of the forwarded record; The length represents the slot number. 
+if forwarded addresses need to be forwarded once again we would update the original slot to be forwarded to the new forwarding address and clear up the old forwarding address so that it can be used for another record.
+-For determining if a slot is free the length will be 0. When inserting we will go through the slot directory to see if there are any free slots. to do this we had to slightly alter insert record to iterate linearly through the slot directory.
 
 7. Other (optional)
 - Freely use this section to tell us about things that are related to the project 2, but not related to the other sections, such as design and implementation information for Advanced Features, if you've implemented them (optional).
