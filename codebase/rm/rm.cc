@@ -232,28 +232,30 @@ RC RelationManager::deleteTable(const string &tableName)
     scan("Tables", "table-name", EQ_OP, tableName.c_str(), getAttrs, scanner);
     vector<RID> rids;
     RID rid;
-    void * data = malloc(4096);
+    void * data = calloc(1, 4096);
     if(scanner.getNextTuple(rid, data) == RM_EOF){
         fprintf(stderr, "Table doesn't exist\n");
         return -1;
-    }   
-    if(_rbf_manager->deleteRecord(tables, tableAttrs, rid)){
+    }  
+    FileHandle newt;
+    _rbf_manager->openFile("Tables.tbl", newt);
+    if(_rbf_manager->deleteRecord(newt, tableAttrs, rid)){
         fprintf(stderr, "Error deleting record in table catalog\n");
         return -1;
     }
-    cout << "1" << endl;
     getAttrs.clear();
     RM_ScanIterator scanner2;
     int * hold = (int *)calloc(1, sizeof(int));
     memcpy(hold, (char*)data+1, sizeof(int));
     scan("Columns", "table-id", EQ_OP, hold, getAttrs, scanner2);
-    cout << "1" << endl;
     memset(data, 0, 4096);  
     while(scanner2.getNextTuple(rid, data) != RM_EOF){
         rids.push_back(rid);
     }
+    FileHandle newts;
+    _rbf_manager->openFile("Columns.tbl", newts);
     for(int i = 0; i < (int)rids.size(); i++){
-        if(_rbf_manager->deleteRecord(columns, columnAttrs, rids[i])){
+        if(_rbf_manager->deleteRecord(newts, columnAttrs, rids[i])){
             fprintf(stderr, "Error deleting record in column catalog\n");
             return -1;
         }
@@ -272,7 +274,7 @@ RC RelationManager::getAttributes(const string &tableName, vector<Attribute> &at
     getAttrs.push_back("table-id");
     scan("Tables", "table-name", EQ_OP, tableName.c_str(), getAttrs, scanner);
     RID rid;
-    void * data = malloc(4096);
+    void * data = calloc(1, 4096);
     if(scanner.getNextTuple(rid, data) == RM_EOF){
         fprintf(stderr, "Table doesn't exist\n");
         return -1;
@@ -476,7 +478,7 @@ RC RM_ScanIterator::getNextTuple(RID &rid, void * data){
     int j = scannedRID.slotNum + 1;
     for(i; i < table.getNumberOfPages(); i++){
         uint16_t slots;
-        void * page = malloc(4096);
+        void * page = calloc(1, 4096);
         table.readPage(i, page);
         memcpy(&slots, (char*)page+sizeof(uint16_t), sizeof(uint16_t));
         for(j; j < slots; j++){
