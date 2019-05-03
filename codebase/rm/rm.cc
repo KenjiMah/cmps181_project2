@@ -64,8 +64,6 @@ void RelationManager::updateCatalog(const string &tableName, const vector<Attrib
     void * data = calloc(1, 4096);
     int offset = 0;
     int nameLength = tableName.length();
-    void * tester = calloc(1,4);
-    memcpy((char *)tester, (char*)&offset, sizeof(int));
     // Set the null bit to 0 as no null fields
     offset += 1;
     // Set table-id field
@@ -220,30 +218,38 @@ RC RelationManager::createTable(const string &tableName, const vector<Attribute>
 
 RC RelationManager::deleteTable(const string &tableName)
 {
+    if(tableName == "Table" || tableName == "Column"){
+        fprintf(stderr, "You cannot delete from the catalog tables\n");
+        return -1;
+    }
     if(_rbf_manager->destroyFile(tableName + ".tbl")){
         fprintf(stderr, "Failure destroying table\n");
         return -1;
     }
-
     RM_ScanIterator scanner;
     vector<string> getAttrs;
     getAttrs.push_back("table-id");
-    scan("Tables", "table-name", EQ_OP, &tableName, getAttrs, scanner);
+    scan("Tables", "table-name", EQ_OP, tableName.c_str(), getAttrs, scanner);
     vector<RID> rids;
     RID rid;
     void * data = malloc(4096);
     if(scanner.getNextTuple(rid, data) == RM_EOF){
         fprintf(stderr, "Table doesn't exist\n");
         return -1;
-    }
+    }   
     if(_rbf_manager->deleteRecord(tables, tableAttrs, rid)){
         fprintf(stderr, "Error deleting record in table catalog\n");
         return -1;
     }
+    cout << "1" << endl;
     getAttrs.clear();
-    scan("Columns", "table-id", EQ_OP, (char *)data+1, getAttrs, scanner);
-    memset(data, 0, 4096);
-    while(scanner.getNextTuple(rid, data) != RM_EOF){
+    RM_ScanIterator scanner2;
+    int * hold = (int *)calloc(1, sizeof(int));
+    memcpy(hold, (char*)data+1, sizeof(int));
+    scan("Columns", "table-id", EQ_OP, hold, getAttrs, scanner2);
+    cout << "1" << endl;
+    memset(data, 0, 4096);  
+    while(scanner2.getNextTuple(rid, data) != RM_EOF){
         rids.push_back(rid);
     }
     for(int i = 0; i < (int)rids.size(); i++){
@@ -252,6 +258,7 @@ RC RelationManager::deleteTable(const string &tableName)
             return -1;
         }
     }
+    free(data);
     return 0;
 }
 
@@ -275,20 +282,32 @@ RC RelationManager::getAttributes(const string &tableName, vector<Attribute> &at
     getAttrs.push_back("column-type");
     getAttrs.push_back("column-length");
     RM_ScanIterator scanner2;
-    scan("Columns", "table-id", EQ_OP, (char *)data+1, getAttrs, scanner2);
+    int * hold = (int *)calloc(1, sizeof(int));
+    memcpy(hold, (char*)data+1, sizeof(int));
+    scan("Columns", "table-id", EQ_OP, hold, getAttrs, scanner2);
     memset(data, 0, 4096);
+    int *offset = (int *) calloc(1, 4);
     while(scanner2.getNextTuple(rid, data) != RM_EOF){
         Attribute attr;
-        int offset = 0;
-        memcpy(&offset, (char*)data+1, sizeof(int));
-        memcpy(&attr.name, (char*)data+5, offset);
-        offset += 5;
-        memcpy(&attr.type, (char*)data+offset, sizeof(int));
-        offset += 4;
-        memcpy(&attr.length, (char*)data+offset, sizeof(int));
-        cout << attr.name << endl;
+        memcpy(offset, (char*)data+1, sizeof(int));
+        char * name = (char *) calloc(1, offset[0]);
+        memcpy(name, (char*)data+5, offset[0]);
+        attr.name = name;
+        offset[0] += 5;
+        AttrType *type = (AttrType *) calloc(1, sizeof(AttrType));
+        memcpy(type, (char*)data+offset[0], sizeof(int));
+        attr.type = *type;
+        offset[0] += 4;
+        AttrLength *len = (AttrLength *) calloc(1, sizeof(AttrLength));
+        memcpy(len, (char*)data+offset[0], sizeof(int));
+        attr.length = *len;
         attrs.push_back(attr);
+        // free(name);
+        // free(type);
+        // free(len);
     }
+    free(offset);
+    free(hold);
     return 0;
 }
 
@@ -330,7 +349,7 @@ RC RelationManager::deleteTuple(const string &tableName, const RID &rid)
         return -1;
     }
     // RC deleteRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid);
-    return -1;
+    return 0;
 }
 
 RC RelationManager::updateTuple(const string &tableName, const void *data, const RID &rid)
@@ -339,25 +358,74 @@ RC RelationManager::updateTuple(const string &tableName, const void *data, const
         fprintf(stderr, "You cannot update the catalog tables\n");
         return -1;
     }
+    FileHandle table;
+    if(_rbf_manager->openFile(tableName + ".tbl", table)){
+        fprintf(stderr, "File does not exist\n");
+        return -1;
+    }
+    vector<Attribute> attrs;
+    getAttributes(tableName, attrs);
+    int rc;
+    rc = _rbf_manager->updateRecord(table, attrs, data, rid);
+    if(rc){
+        fprintf(stderr, "Error updating tuple\n");
+        return -1;
+    }
+    
     //RC updateRecord(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const void *data, const RID &rid);
 
-    return -1;
+    return 0;
 }
 
 RC RelationManager::readTuple(const string &tableName, const RID &rid, void *data)
 {
+    FileHandle table;
+    if(_rbf_manager->openFile(tableName + ".tbl", table)){
+        fprintf(stderr, "File does not exist\n");
+        return -1;
+    }
+    vector<Attribute> attrs;
+    getAttributes(tableName, attrs);
+    int rc;
+    cout << "reading" << endl;
+    rc = _rbf_manager->readRecord(table, attrs, rid, data);
+    if(rc){
+        fprintf(stderr, "Error reading tuple\n");
+        return -1;
+    }
+    cout << "dnoe reading" << endl;
     // RC readAttribute(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid, const string &attributeName, void *data);
-    return -1;
+    return 0;
 }
 
 RC RelationManager::printTuple(const vector<Attribute> &attrs, const void *data)
 {
-	return -1;
+    int rc;
+    rc = _rbf_manager->printRecord(attrs, data);
+    if(rc){
+        fprintf(stderr, "Error printing tuple\n");
+        return -1;
+    }
+    // RC readAttribute(FileHandle &fileHandle, const vector<Attribute> &recordDescriptor, const RID &rid, const string &attributeName, void *data);
+    return 0;
 }
 
 RC RelationManager::readAttribute(const string &tableName, const RID &rid, const string &attributeName, void *data)
 {
-    return -1;
+    FileHandle table;
+    if(_rbf_manager->openFile(tableName + ".tbl", table)){
+        fprintf(stderr, "File does not exist\n");
+        return -1;
+    }
+    vector<Attribute> attrs;
+    getAttributes(tableName, attrs);
+    int rc;
+    rc = _rbf_manager->readAttribute(table, attrs, rid, attributeName, data);
+    if(rc){
+        fprintf(stderr, "Error reading tuple\n");
+        return -1;
+    }
+    return 0;
 }
 
 RC RelationManager::scan(const string &tableName,
@@ -369,7 +437,6 @@ RC RelationManager::scan(const string &tableName,
 {
     // Check if the table passed through actually exists
     int rc;
-    cout << tableName << endl;
     rc = _rbf_manager->openFile(tableName + ".tbl", rm_ScanIterator.table);
     if(rc){
         fprintf(stderr, "File does not exist");
@@ -399,16 +466,20 @@ RC RelationManager::scan(const string &tableName,
             }
         }
     }
+    rm_ScanIterator.scannedRID.slotNum = 0;
+    rm_ScanIterator.scannedRID.pageNum = 0;
     return 0;
 }
 
 RC RM_ScanIterator::getNextTuple(RID &rid, void * data){
-    for(int i = 0; i < table.getNumberOfPages(); i++){
+    int i = scannedRID.pageNum;
+    int j = scannedRID.slotNum + 1;
+    for(i; i < table.getNumberOfPages(); i++){
         uint16_t slots;
         void * page = malloc(4096);
         table.readPage(i, page);
         memcpy(&slots, (char*)page+sizeof(uint16_t), sizeof(uint16_t));
-        for(int j = 0; j < slots; j++){
+        for(j; j < slots; j++){
             // Check record corresponding to RIDS
             RID checkRID;
             checkRID.pageNum = i;
@@ -431,9 +502,11 @@ RC RM_ScanIterator::getNextTuple(RID &rid, void * data){
             char *nullChar = (char*)calloc(1,sizeof(char));
             memcpy(nullChar, record, sizeof(char));
             void* attrCheck = nullptr;
+            int *offset = nullptr;
+            int *valueInt = nullptr;
             if(nullChar != 0){
                 attrCheck = calloc(1, 4096);
-                int *offset = (int *) calloc(1, sizeof(int));
+                offset = (int *) calloc(1, sizeof(int));       
                 // cout << "Page: " << i << "Record: " << j << endl;
                 // If attribute to be checked is a string account for it
                 if(conditionType){
@@ -441,52 +514,102 @@ RC RM_ScanIterator::getNextTuple(RID &rid, void * data){
                     memcpy(attrCheck, (char *)record+5, *offset);
                 }else{
                     memcpy(offset, (char *)record+1, sizeof(int));
+                    valueInt = (int *)calloc(1, sizeof(int));
+                    memcpy(valueInt, value, sizeof(int));
+                    // cout << valueInt[0] << " :: " << offset[0] << endl;
                 }
             }
             // Switch based on scan operator
             bool valid = false;
             switch(compOp){
-                case EQ_OP : 
-                    if(strcmp((char*)attrCheck,(char*)value) == 0){
-                        cout << "213123" << endl;
-                        rid = checkRID;
-                        valid = true;
-                        returnData(rid, data);
+                case EQ_OP :
+                    if(conditionType){
+                        if(strcmp((char*)attrCheck,(char*)value) == 0){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
+                    }else{    
+                        if(offset[0] == valueInt[0]){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
                     }
                     break; // no condition// = 
                 case LT_OP : 
-                    if(attrCheck < value){
-                        rid = checkRID;
-                        valid = true;
-                        returnData(rid, data);
+                    if(conditionType){
+                        if(strcmp((char*)attrCheck,(char*)value) < 0){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
+                    }else{    
+                        if(attrCheck < value){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
                     }
                     break; // <
                 case LE_OP :
-                    if(attrCheck <= value){
-                        rid = checkRID;
-                        valid = true;
-                        returnData(rid, data);
+                    if(conditionType){
+                        if(strcmp((char*)attrCheck,(char*)value) <= 0){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
+                    }else{    
+                        if(attrCheck <= value){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
                     }
                     break; // <=
                 case GT_OP :
-                    if(attrCheck > value){
-                        rid = checkRID;
-                        valid = true;
-                        returnData(rid, data);
+                    if(conditionType){
+                        if(strcmp((char*)attrCheck,(char*)value) > 0){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
+                    }else{    
+                        if(attrCheck > value){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
                     }
                     break; // >
                 case GE_OP :
-                    if(attrCheck >= value){
-                        rid = checkRID;
-                        valid = true;
-                        returnData(rid, data);
+                    if(conditionType){
+                        if(strcmp((char*)attrCheck,(char*)value) >= 0){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
+                    }else{    
+                        if(attrCheck >= value){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
                     }
                     break; // >=
                 case NE_OP :
-                    if(attrCheck != value){
-                        rid = checkRID;
-                        valid = true;
-                        returnData(rid, data);
+                    if(conditionType){
+                        if(strcmp((char*)attrCheck,(char*)value) != 0){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
+                    }else{    
+                        if(attrCheck != value){
+                            rid = checkRID;
+                            valid = true;
+                            returnData(rid, data);
+                        }
                     }
                     break; // !=
                 case NO_OP : 
@@ -496,9 +619,12 @@ RC RM_ScanIterator::getNextTuple(RID &rid, void * data){
                     break;
             }
             free(record);
-            free(attrCheck);
+            if(valueInt != nullptr)free(valueInt);
+            if(attrCheck != nullptr)free(attrCheck);
+            if(offset != nullptr)free(offset);
             if(valid){
                 free(page);
+                scannedRID = rid;
                 return 0;
             }
         }
@@ -509,7 +635,7 @@ RC RM_ScanIterator::getNextTuple(RID &rid, void * data){
 
 void RM_ScanIterator::returnData(RID &rid, void* data){
     vector<Attribute> returnAttrs;
-    int nullBytes = ceil(attrNames.size()/8);
+    int nullBytes = ceil((double)attrNames.size()/8);
     int offset = nullBytes;
     char *nullChar = (char*)calloc(1,sizeof(char));
     char *nullBytesIndicators = (char*)calloc(1, nullBytes);
